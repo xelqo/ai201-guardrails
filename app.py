@@ -39,6 +39,7 @@ def init_db():
                 attribution TEXT,
                 confidence  REAL,
                 llm_score   REAL,
+                stylo_score REAL,
                 status      TEXT
             )
         """)
@@ -48,8 +49,8 @@ def log_event(entry):
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
             "INSERT INTO audit_log "
-            "(content_id, creator_id, timestamp, attribution, confidence, llm_score, status) "
-            "VALUES (:content_id, :creator_id, :timestamp, :attribution, :confidence, :llm_score, :status)",
+            "(content_id, creator_id, timestamp, attribution, confidence, llm_score, stylo_score, status) "
+            "VALUES (:content_id, :creator_id, :timestamp, :attribution, :confidence, :llm_score, :stylo_score, :status)",
             entry,
         )
 
@@ -92,9 +93,13 @@ def submit():
 
     content_id = str(uuid.uuid4())
     llm_score = llm_signal(text)
-    if llm_score > 0.75:
+
+    stylo_score = stylometry_signal(text)
+    ai_likelihood = round(0.7 * llm_score + 0.3 * stylo_score, 3)
+
+    if ai_likelihood > 0.75:
         attribution = "likely_ai"
-    elif llm_score < 0.4:
+    elif ai_likelihood < 0.4:
         attribution = "likely_human"
     else:
         attribution = "uncertain"
@@ -103,15 +108,16 @@ def submit():
         "content_id": content_id,
         "creator_id": creator_id,
         "attribution": attribution,
-        "confidence": llm_score,   # placeholder until M4
+        "confidence": ai_likelihood,   
         "llm_score": llm_score,
+        "stylo_score": stylo_score,
         "status": "classified",
     })
 
     return jsonify({
         "content_id": content_id,
         "attribution": attribution,
-        "confidence": llm_score,
+        "confidence": ai_likelihood,
         "label": "placeholder label",
     })
 
