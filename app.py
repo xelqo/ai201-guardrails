@@ -3,7 +3,45 @@ from flask import Flask, request, jsonify
 import os, json
 from groq import Groq
 from dotenv import load_dotenv
+import sqlite3
+from datetime import datetime, timezone
+
+DB_PATH = "audit_log.db"
+
+def init_db():
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS audit_log (
+                content_id  TEXT,
+                creator_id  TEXT,
+                timestamp   TEXT,
+                attribution TEXT,
+                confidence  REAL,
+                llm_score   REAL,
+                status      TEXT
+            )
+        """)
+
+def log_event(entry):
+    entry = {**entry, "timestamp": datetime.now(timezone.utc).isoformat()}
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT INTO audit_log "
+            "(content_id, creator_id, timestamp, attribution, confidence, llm_score, status) "
+            "VALUES (:content_id, :creator_id, :timestamp, :attribution, :confidence, :llm_score, :status)",
+            entry,
+        )
+
+def read_log(limit=20):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT * FROM audit_log ORDER BY timestamp DESC LIMIT ?", (limit,)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
 app = Flask(__name__)
+init_db()
 
 load_dotenv()
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
@@ -40,12 +78,25 @@ def submit():
     else:
         attribution = "uncertain"
 
+    log_event({
+        "content_id": content_id,
+        "creator_id": creator_id,
+        "attribution": attribution,
+        "confidence": llm_score,   # placeholder until M4
+        "llm_score": llm_score,
+        "status": "classified",
+    })
+
     return jsonify({
         "content_id": content_id,
         "attribution": attribution,
         "confidence": llm_score,
         "label": "placeholder label",
     })
+
+@app.route("/log", methods=["GET"])
+def view_log():
+    return jsonify({"entries": read_log()})
 
 if __name__ == "__main__":
     app.run(port=5001, debug=True)
