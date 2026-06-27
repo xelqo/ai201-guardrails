@@ -24,21 +24,28 @@ def llm_signal(text):
     raw = response.choices[0].message.content
     result = json.loads(raw)
     return float(result["ai_likelihood"])
+
 @app.route("/submit", methods=["POST"])
 def submit():
     data = request.get_json()
     text = data.get("text")
     creator_id = data.get("creator_id")
 
-    # Hardcoded for now — we'll wire in the Groq signal next step.
+    content_id = str(uuid.uuid4())
+    llm_score = llm_signal(text)
+    if llm_score > 0.75:
+        attribution = "likely_ai"
+    elif llm_score < 0.4:
+        attribution = "likely_human"
+    else:
+        attribution = "uncertain"
+
     return jsonify({
-        "content_id": str(uuid.uuid4()),
-        "attribution": "uncertain",
-        "confidence": 0.5,
+        "content_id": content_id,
+        "attribution": attribution,
+        "confidence": llm_score,
         "label": "placeholder label",
     })
 
 if __name__ == "__main__":
     app.run(port=5001, debug=True)
-    print("human-ish:", llm_signal("ugh my code broke again, third time today lol"))
-    print("ai-ish:", llm_signal("Furthermore, it is important to note that effective time management significantly enhances overall productivity."))
