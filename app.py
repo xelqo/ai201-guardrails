@@ -5,8 +5,29 @@ from groq import Groq
 from dotenv import load_dotenv
 import sqlite3
 from datetime import datetime, timezone
+import re
+import statistics
 
 DB_PATH = "audit_log.db"
+
+def stylometry_signal(text):
+    sentences = [s.strip() for s in re.split(r"[.!?]+", text) if s.strip()]
+    words = re.findall(r"\b\w+\b", text.lower())
+
+    # Guard: too short for meaningful stats -> neutral (your edge case #1)
+    if len(sentences) < 2 or len(words) < 10:
+        return 0.5
+
+    # Metric 1: sentence-length variance. Low variance = uniform = AI-like.
+    lengths = [len(re.findall(r"\b\w+\b", s)) for s in sentences]
+    stdev = statistics.pstdev(lengths)
+    variance_ai = 1 - min(max((stdev - 2) / (10 - 2), 0), 1)  # stdev 2->1.0(AI), 10->0.0(human)
+
+    # Metric 2: type-token ratio (vocab diversity). Lower diversity = more AI-like.
+    ttr = len(set(words)) / len(words)
+    ttr_ai = 1 - min(max((ttr - 0.4) / (0.7 - 0.4), 0), 1)    # ttr 0.4->1.0(AI), 0.7->0.0(human)
+
+    return round((variance_ai + ttr_ai) / 2, 3)
 
 def init_db():
     with sqlite3.connect(DB_PATH) as conn:
@@ -93,7 +114,7 @@ def submit():
         "confidence": llm_score,
         "label": "placeholder label",
     })
-
+f
 @app.route("/log", methods=["GET"])
 def view_log():
     return jsonify({"entries": read_log()})
