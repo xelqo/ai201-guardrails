@@ -109,7 +109,6 @@ def llm_signal(text):
     return float(result["ai_likelihood"])
 
 @app.route("/submit", methods=["POST"])
-@app.route("/submit", methods=["POST"])
 def submit():
     data = request.get_json()
     text = data.get("text")
