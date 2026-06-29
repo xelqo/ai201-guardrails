@@ -10,6 +10,14 @@ import statistics
 
 DB_PATH = "audit_log.db"
 
+def make_label(attribution):
+    labels = {
+        "likely_ai": "This content shows strong signs of being AI-generated. Our system is fairly confident, but automated detection isn't perfect — the creator can appeal this assessment.",
+        "likely_human": "This content appears to be human-written. No strong signs of AI generation were detected.",
+        "uncertain": "We can't confidently determine whether this was written by a human or AI. Treat this result with caution.",
+    }
+    return labels[attribution]
+
 def stylometry_signal(text):
     sentences = [s.strip() for s in re.split(r"[.!?]+", text) if s.strip()]
     words = re.findall(r"\b\w+\b", text.lower())
@@ -33,24 +41,39 @@ def init_db():
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS audit_log (
-                content_id  TEXT,
+                content_id      TEXT,
+                creator_id      TEXT,
+                timestamp       TEXT,
+                attribution     TEXT,
+                confidence      REAL,
+                llm_score       REAL,
+                stylo_score     REAL,
+                status          TEXT,
+                appeal_reasoning TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS submissions (
+                content_id  TEXT PRIMARY KEY,
                 creator_id  TEXT,
-                timestamp   TEXT,
+                text        TEXT,
                 attribution TEXT,
                 confidence  REAL,
-                llm_score   REAL,
-                stylo_score REAL,
                 status      TEXT
             )
         """)
 
 def log_event(entry):
-    entry = {**entry, "timestamp": datetime.now(timezone.utc).isoformat()}
+    entry = {
+        "appeal_reasoning": None,   # default; appeals override this
+        **entry,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
             "INSERT INTO audit_log "
-            "(content_id, creator_id, timestamp, attribution, confidence, llm_score, stylo_score, status) "
-            "VALUES (:content_id, :creator_id, :timestamp, :attribution, :confidence, :llm_score, :stylo_score, :status)",
+            "(content_id, creator_id, timestamp, attribution, confidence, llm_score, stylo_score, status, appeal_reasoning) "
+            "VALUES (:content_id, :creator_id, :timestamp, :attribution, :confidence, :llm_score, :stylo_score, :status, :appeal_reasoning)",
             entry,
         )
 
@@ -86,6 +109,7 @@ def llm_signal(text):
     return float(result["ai_likelihood"])
 
 @app.route("/submit", methods=["POST"])
+@app.route("/submit", methods=["POST"])
 def submit():
     data = request.get_json()
     text = data.get("text")
@@ -93,7 +117,6 @@ def submit():
 
     content_id = str(uuid.uuid4())
     llm_score = llm_signal(text)
-
     stylo_score = stylometry_signal(text)
     ai_likelihood = round(0.7 * llm_score + 0.3 * stylo_score, 3)
 
@@ -104,11 +127,21 @@ def submit():
     else:
         attribution = "uncertain"
 
+    label = make_label(attribution)
+
+    # Save to mutable submissions table (so appeals can look it up + update status)
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT INTO submissions (content_id, creator_id, text, attribution, confidence, status) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (content_id, creator_id, text, attribution, ai_likelihood, "classified"),
+        )
+
     log_event({
         "content_id": content_id,
         "creator_id": creator_id,
         "attribution": attribution,
-        "confidence": ai_likelihood,   
+        "confidence": ai_likelihood,
         "llm_score": llm_score,
         "stylo_score": stylo_score,
         "status": "classified",
@@ -118,9 +151,8 @@ def submit():
         "content_id": content_id,
         "attribution": attribution,
         "confidence": ai_likelihood,
-        "label": "placeholder label",
+        "label": label,
     })
-
 @app.route("/log", methods=["GET"])
 def view_log():
     return jsonify({"entries": read_log()})
