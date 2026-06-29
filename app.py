@@ -7,6 +7,17 @@ import sqlite3
 from datetime import datetime, timezone
 import re
 import statistics
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+
+app = Flask(__name__)
+
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=[],
+    storage_uri="memory://",
+)
 
 DB_PATH = "audit_log.db"
 
@@ -85,9 +96,7 @@ def read_log(limit=20):
         ).fetchall()
     return [dict(r) for r in rows]
 
-app = Flask(__name__)
 init_db()
-
 load_dotenv()
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
@@ -150,6 +159,7 @@ def appeal():
     })
 
 @app.route("/submit", methods=["POST"])
+@limiter.limit("10 per minute;100 per day")
 def submit():
     data = request.get_json()
     text = data.get("text")
