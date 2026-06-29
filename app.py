@@ -108,6 +108,47 @@ def llm_signal(text):
     result = json.loads(raw)
     return float(result["ai_likelihood"])
 
+@app.route("/appeal", methods=["POST"])
+def appeal():
+    data = request.get_json()
+    content_id = data.get("content_id")
+    reasoning = data.get("creator_reasoning")
+
+    # Look up the original submission
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM submissions WHERE content_id = ?", (content_id,)
+        ).fetchone()
+
+    if row is None:
+        return jsonify({"error": "content_id not found"}), 404
+
+    # Update the submission's status
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "UPDATE submissions SET status = ? WHERE content_id = ?",
+            ("under_review", content_id),
+        )
+
+    # Log the appeal alongside the original decision
+    log_event({
+        "content_id": content_id,
+        "creator_id": row["creator_id"],
+        "attribution": row["attribution"],
+        "confidence": row["confidence"],
+        "llm_score": None,
+        "stylo_score": None,
+        "status": "under_review",
+        "appeal_reasoning": reasoning,
+    })
+
+    return jsonify({
+        "content_id": content_id,
+        "status": "under_review",
+        "message": "Your appeal was received and is under review.",
+    })
+
 @app.route("/submit", methods=["POST"])
 def submit():
     data = request.get_json()
